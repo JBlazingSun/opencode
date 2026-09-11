@@ -4,6 +4,7 @@ type Usage = {
   input_tokens?: number
   input_tokens_details?: {
     cached_tokens?: number
+    cache_write_tokens?: number
   }
   output_tokens?: number
   output_tokens_details?: {
@@ -12,15 +13,14 @@ type Usage = {
   total_tokens?: number
 }
 
-export const openaiHelper = {
+export const openaiHelper: ProviderHelper = ({ workspaceID }) => ({
   format: "openai",
   modifyUrl: (providerApi: string) => providerApi + "/responses",
-  modifyHeaders: (headers: Headers, body: Record<string, any>, apiKey: string) => {
+  modifyHeaders: (headers: Headers, apiKey: string, _stickyId: string) => {
     headers.set("authorization", `Bearer ${apiKey}`)
   },
-  modifyBody: (body: Record<string, any>) => {
-    return body
-  },
+  modifyBody: (body: Record<string, any>) => body,
+  createBinaryStreamDecoder: () => undefined,
   createUsageParser: () => {
     let usage: Usage
 
@@ -33,7 +33,7 @@ export const openaiHelper = {
         let json
         try {
           json = JSON.parse(data.slice(6)) as { response?: { usage?: Usage } }
-        } catch (e) {
+        } catch {
           return
         }
 
@@ -43,21 +43,26 @@ export const openaiHelper = {
       retrieve: () => usage,
     }
   },
+  extractUsage: (response: any) => response.usage ?? response.response?.usage,
   normalizeUsage: (usage: Usage) => {
     const inputTokens = usage.input_tokens ?? 0
     const outputTokens = usage.output_tokens ?? 0
     const reasoningTokens = usage.output_tokens_details?.reasoning_tokens ?? undefined
     const cacheReadTokens = usage.input_tokens_details?.cached_tokens ?? undefined
+    const cacheWriteTokens = usage.input_tokens_details?.cache_write_tokens ?? undefined
     return {
-      inputTokens: inputTokens - (cacheReadTokens ?? 0),
-      outputTokens: outputTokens - (reasoningTokens ?? 0),
+      // OpenAI's input_tokens includes both cached_tokens and cache_write_tokens;
+      // each is billed separately at its own rate. Clamp to zero so a provider
+      // reporting overlapping detail fields cannot drive input cost negative.
+      inputTokens: Math.max(0, inputTokens - (cacheReadTokens ?? 0) - (cacheWriteTokens ?? 0)),
+      outputTokens,
       reasoningTokens,
       cacheReadTokens,
-      cacheWrite5mTokens: undefined,
+      cacheWrite5mTokens: cacheWriteTokens,
       cacheWrite1hTokens: undefined,
     }
   },
-} satisfies ProviderHelper
+})
 
 export function fromOpenaiRequest(body: any): CommonRequest {
   if (!body || typeof body !== "object") return body

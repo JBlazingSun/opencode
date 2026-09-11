@@ -3,10 +3,10 @@ import { Actor } from "@opencode-ai/console-core/actor.js"
 import { action, json, query } from "@solidjs/router"
 import { withActor } from "~/context/auth.withActor"
 import { Billing } from "@opencode-ai/console-core/billing.js"
-import { User } from "@opencode-ai/console-core/user.js"
 import { and, Database, desc, eq, isNull } from "@opencode-ai/console-core/drizzle/index.js"
 import { WorkspaceTable } from "@opencode-ai/console-core/schema/workspace.sql.js"
 import { UserTable } from "@opencode-ai/console-core/schema/user.sql.js"
+import { checkCheckoutRateLimit } from "~/routes/zen/util/redis"
 
 export function formatDateForTable(date: Date) {
   const options: Intl.DateTimeFormatOptions = {
@@ -31,7 +31,7 @@ export function formatDateUTC(date: Date) {
     timeZoneName: "short",
     timeZone: "UTC",
   }
-  return date.toLocaleDateString("en-US", options)
+  return date.toLocaleDateString(undefined, options)
 }
 
 export function formatBalance(amount: number) {
@@ -78,7 +78,8 @@ export const createCheckoutUrl = action(
     return json(
       await withActor(
         () =>
-          Billing.generateCheckoutUrl({ amount, successUrl, cancelUrl })
+          checkCheckoutRateLimit(Actor.account())
+            .then(() => Billing.generateCheckoutUrl({ amount, successUrl, cancelUrl }))
             .then((data) => ({ error: undefined, data }))
             .catch((e) => ({
               error: e.message as string,
@@ -96,11 +97,28 @@ export const queryBillingInfo = query(async (workspaceID: string) => {
   return withActor(async () => {
     const billing = await Billing.get()
     return {
-      ...billing,
+      customerID: billing.customerID,
+      paymentMethodID: billing.paymentMethodID,
+      paymentMethodType: billing.paymentMethodType,
+      paymentMethodLast4: billing.paymentMethodLast4,
+      balance: billing.balance,
+      reload: billing.reload,
       reloadAmount: billing.reloadAmount ?? Billing.RELOAD_AMOUNT,
       reloadAmountMin: Billing.RELOAD_AMOUNT_MIN,
       reloadTrigger: billing.reloadTrigger ?? Billing.RELOAD_TRIGGER,
       reloadTriggerMin: Billing.RELOAD_TRIGGER_MIN,
+      monthlyLimit: billing.monthlyLimit,
+      monthlyUsage: billing.monthlyUsage,
+      timeMonthlyUsageUpdated: billing.timeMonthlyUsageUpdated,
+      reloadError: billing.reloadError,
+      timeReloadError: billing.timeReloadError,
+      subscription: billing.subscription,
+      subscriptionID: billing.subscriptionID,
+      subscriptionPlan: billing.subscriptionPlan,
+      timeSubscriptionBooked: billing.timeSubscriptionBooked,
+      timeSubscriptionSelected: billing.timeSubscriptionSelected,
+      lite: billing.lite,
+      liteSubscriptionID: billing.liteSubscriptionID,
     }
   }, workspaceID)
 }, "billing.get")
